@@ -252,7 +252,7 @@ func NewLB(listen string) {
 	}()
 
 	certFile := "certs/live/golb.ricardomolendijk.com/cert.pem"
-	keyFile := "certs/live/golb.ricardomolendijk.com/key.pem"
+	keyFile := "certs/live/golb.ricardomolendijk.com/privkey.pem"
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		l.Fatal("Failed to load certificates", "error", err)
