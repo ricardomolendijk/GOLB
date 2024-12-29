@@ -251,27 +251,51 @@ func NewLB(listen string) {
 		}
 	}()
 
-	certFile := "certs/live/golb.ricardomolendijk.com/cert.pem"
-	keyFile := "certs/live/golb.ricardomolendijk.com/privkey.pem"
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		l.Fatal("Failed to load certificates", "error", err)
-	}
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-	}
+	if listen == ":443" {
+		certFile := "certs/live/golb.ricardomolendijk.com/cert.pem"
+		keyFile := "certs/live/golb.ricardomolendijk.com/privkey.pem"
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			l.Fatal("Failed to load certificates", "error", err)
+		}
+		tlsConfig := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}
 
-	server := &http.Server{
-		Addr:      listen,
-		Handler:   http.HandlerFunc(handler),
-		TLSConfig: tlsConfig,
-	}
+		server := &http.Server{
+			Addr:      listen,
+			Handler:   http.HandlerFunc(handler),
+			TLSConfig: tlsConfig,
+		}
 
-	go gracefulShutdown(server)
+		go func() {
+			http.ListenAndServe(":80", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				target := "https://" + r.Host + r.URL.Path
+				if len(r.URL.RawQuery) > 0 {
+					target += "?" + r.URL.RawQuery
+				}
+				http.Redirect(w, r, target, http.StatusMovedPermanently)
+			}))
+		}()
 
-	l.Info("Load balancer running", "port", listen)
-	if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
-		l.Fatal("Server failed", "error", err)
+		go gracefulShutdown(server)
+
+		l.Info("Load balancer running with SSL", "port", listen)
+		if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+			l.Fatal("Server failed", "error", err)
+		}
+	} else {
+		server := &http.Server{
+			Addr:    listen,
+			Handler: http.HandlerFunc(handler),
+		}
+
+		go gracefulShutdown(server)
+
+		l.Info("Load balancer running without SSL", "port", listen)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			l.Fatal("Server failed", "error", err)
+		}
 	}
 
 	wg.Wait()
