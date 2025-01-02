@@ -18,6 +18,9 @@ func main() {
 	listen := util.GetEnv("LISTEN", ":443")
 	logDir := util.GetEnv("LOGDIR", "./logs")
 	saveLogs := util.GetEnvAsBool("SAVELOGS", true)
+	ssl := util.GetEnvAsBool("SSL", true)
+	privkey := util.GetEnv("PRIVKEY", "/cert/private.key")
+	pubkey := util.GetEnv("SAVELOGS", "/cert/public.key")
 
 	//* Set up logging
 	logFile, err := l.NewLogger(debug, logDir, saveLogs)
@@ -31,6 +34,6 @@ func main() {
 	}()
 
 	//* Launch the API server
-	lb.NewLB(listen)
+	lb.NewLB(listen, pubkey, privkey, ssl)
 }
 

@@ -1,9 +1,9 @@
 run:
-	go run .
+	@go run .
 
 build:
-	go build -o main .
+	@go build -o ./bin/app .
 
 lint:
-	golangci-lint run
+	@golangci-lint run
 

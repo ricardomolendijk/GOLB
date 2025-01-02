@@ -51,13 +51,13 @@ func init() {
 func loadBackends(file string) ([]*Backend, error) {
 	fileData, err := os.ReadFile(file)
 	if err != nil {
-		return nil, fmt.Errorf("could not read backends file: %v", err)
+		return nil, fmt.Errorf("[Backends] Could not read backends file: %v", err)
 	}
 
 	var loadedBackends []Backend
 	err = json.Unmarshal(fileData, &loadedBackends)
 	if err != nil {
-		return nil, fmt.Errorf("could not unmarshal backends data: %v", err)
+		return nil, fmt.Errorf("[Backends] Could not unmarshal backends data: %v", err)
 	}
 	backends := make([]*Backend, len(loadedBackends))
 	for i := range loadedBackends {
@@ -65,7 +65,7 @@ func loadBackends(file string) ([]*Backend, error) {
 		// Parse latency string to time.Duration
 		b.Latency, err = time.ParseDuration(b.LatencyStr)
 		if err != nil {
-			return nil, fmt.Errorf("invalid latency format for backend %s: %v", b.URL, err)
+			return nil, fmt.Errorf("[Backends] Invalid latency format for backend %s: %v", b.URL, err)
 		}
 		b.Active.Store(b.ActiveStatus)
 		backends[i] = b
@@ -151,7 +151,7 @@ func getNextBackend(clientIP string) *Backend {
 			if exists {
 				oldBackendURL = currentBackend.URL
 			}
-			l.Info("User changed backend", "clientIP", clientIP, "from", oldBackendURL, "to", selectedBackend.URL)
+			l.Info("[Request] User changed backend", "clientIP", clientIP, "from", oldBackendURL, "to", selectedBackend.URL)
 		}
 		clientPreferredBackend[clientIP] = selectedBackend
 		sessionExpiration[clientIP] = time.Now().Add(sessionTimeout)
@@ -165,7 +165,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	clientIP, _, _ := net.SplitHostPort(r.RemoteAddr)
 	backend := getNextBackend(clientIP)
 	if backend == nil {
-		l.Error("No active backends available!")
+		l.Error("[Backends] No active backends available!")
 		http.Error(w, "All servers are currently unavailable. Please try again later.", http.StatusServiceUnavailable)
 		return
 	}
@@ -180,6 +180,14 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			req.URL.Scheme = proxyURL.Scheme
 			req.URL.Host = proxyURL.Host
 			req.Header.Set("X-Forwarded-For", r.RemoteAddr)
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if err != nil && strings.Contains(err.Error(), "context canceled") {
+				l.Warn("[Request] http: proxy error: context canceled", "clientIP", clientIP)
+			} else {
+				l.Error("[Request] http: proxy error", "error", err)
+			}
+			http.Error(w, "Proxy error", http.StatusBadGateway)
 		},
 	}
 	proxy.ServeHTTP(w, r)
@@ -218,22 +226,23 @@ func gracefulShutdown(server *http.Server) {
 	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
 	<-signalChan
 
-	l.Info("Shutting down gracefully...")
+	l.Info("[Status] Shutting down gracefully...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := server.Shutdown(ctx)
 	if err != nil {
-		l.Fatal("Server shutdown failed", "error", err)
+		l.Fatal("[Status] Server shutdown failed", "error", err)
 	}
-	l.Info("Server stopped successfully")
+	l.Info("[Status] Server stopped successfully")
+os.Exit(0)
 }
 
-func NewLB(listen string) {
+func NewLB(listen string, pubkey string, privkey string, ssl bool) {
 	var err error
 	backends, err = loadBackends("backends.json")
 	if err != nil {
-		l.Fatal("Error loading backends", "error", err)
+		l.Fatal("[Backends] Error loading backends", "error", err)
 	}
 
 	var wg sync.WaitGroup
@@ -251,38 +260,40 @@ func NewLB(listen string) {
 		}
 	}()
 
-	if listen == ":443" {
-		certFile := "certs/live/golb.ricardomolendijk.com/cert.pem"
-		keyFile := "certs/live/golb.ricardomolendijk.com/privkey.pem"
+	if ssl {
+		certFile := pubkey
+		keyFile := privkey
 		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 		if err != nil {
-			l.Fatal("Failed to load certificates", "error", err)
+			l.Fatal("[Status] Failed to load certificates", "error", err)
 		}
 		tlsConfig := &tls.Config{
 			Certificates: []tls.Certificate{cert},
 		}
 
 		server := &http.Server{
-			Addr:      listen,
+			Addr:      "443",
 			Handler:   http.HandlerFunc(handler),
 			TLSConfig: tlsConfig,
 		}
 
 		go func() {
-			http.ListenAndServe(":80", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := http.ListenAndServe(":80", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				target := "https://" + r.Host + r.URL.Path
 				if len(r.URL.RawQuery) > 0 {
 					target += "?" + r.URL.RawQuery
 				}
 				http.Redirect(w, r, target, http.StatusMovedPermanently)
-			}))
+			})); err != nil {
+				l.Fatal("[Status] HTTP to HTTPS redirect server failed to start!", "error", err)
+			}
 		}()
 
 		go gracefulShutdown(server)
 
-		l.Info("Load balancer running with SSL", "port", listen)
+		l.Info("[Status] Load balancer running with SSL", "port", ":443")
 		if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
-			l.Fatal("Server failed", "error", err)
+			l.Fatal("[Status] Server failed", "error", err)
 		}
 	} else {
 		server := &http.Server{
@@ -292,9 +303,9 @@ func NewLB(listen string) {
 
 		go gracefulShutdown(server)
 
-		l.Info("Load balancer running without SSL", "port", listen)
+		l.Info("[Status] Load balancer running without SSL", "port", listen)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			l.Fatal("Server failed", "error", err)
+			l.Fatal("[Status] Server failed", "error", err)
 		}
 	}
 

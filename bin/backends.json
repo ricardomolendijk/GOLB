@@ -1,0 +1,23 @@
+[
+  {
+    "URL": "http://localhost:8081",
+    "ActiveStatus": true,
+    "Latency": "0s",
+    "RequestCount": 0,
+    "Weight": 5
+  },
+  {
+    "URL": "http://localhost:8082",
+    "ActiveStatus": true,
+    "Latency": "0s",
+    "RequestCount": 0,
+    "Weight": 5
+  },
+  {
+    "URL": "http://localhost:8083",
+    "ActiveStatus": true,
+    "Latency": "0s",
+    "RequestCount": 0,
+    "Weight": 5
+  }
+]
